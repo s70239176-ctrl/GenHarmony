@@ -13,7 +13,8 @@ export function ProposeEvolutionForm({
   onProposed,
 }: {
   trackId: string;
-  onProposed?: () => void;
+  // Now receives the real on-chain proposal ID + type
+  onProposed?: (proposalId: string, type: string) => void;
 }) {
   const { proposeEvolution } = useHarmonyForge();
   const [type, setType] = useState<(typeof TYPES)[number]>("harmony");
@@ -26,11 +27,15 @@ export function ProposeEvolutionForm({
     setError(null);
     setSubmitting(true);
     try {
-      await proposeEvolution(trackId, text, type);
+      // proposeEvolution now returns the real on-chain proposal ID
+      const proposalId = await proposeEvolution(trackId, text, type);
       setText("");
-      onProposed?.();
+      onProposed?.(String(proposalId), type);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not splice this in.");
+      const msg = err instanceof Error ? err.message
+        : typeof err === "object" ? JSON.stringify(err)
+        : String(err);
+      setError(msg);
     } finally {
       setSubmitting(false);
     }

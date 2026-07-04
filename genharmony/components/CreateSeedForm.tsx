@@ -31,7 +31,15 @@ export function CreateSeedForm({ onCreated }: { onCreated?: (trackId: string) =>
       setGenre("");
       setSeedPrompt("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not press this seed to the deck.");
+      if (err instanceof Error) {
+        setError(err.message);
+      } else {
+        try {
+          setError(JSON.stringify(err));
+        } catch {
+          setError(String(err));
+        }
+      }
     } finally {
       setSubmitting(false);
     }

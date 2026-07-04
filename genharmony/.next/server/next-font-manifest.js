@@ -1,1 +1,1 @@
-self.__NEXT_FONT_MANIFEST="{\"pages\":{},\"app\":{},\"appUsingSizeAdjust\":false,\"pagesUsingSizeAdjust\":false}"
+self.__NEXT_FONT_MANIFEST="{\"pages\":{},\"app\":{\"/workspaces/GenHarmony/genharmony/app/layout\":[\"static/media/558ca1a6aa3cb55e-s.p.woff2\",\"static/media/3dc379dc9b5dec12-s.p.woff2\",\"static/media/29b98dbfba401fa9-s.p.woff2\"]},\"appUsingSizeAdjust\":true,\"pagesUsingSizeAdjust\":false}"

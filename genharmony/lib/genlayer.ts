@@ -4,18 +4,19 @@ import { defineChain } from "viem";
 import { createConfig, http, useAccount } from "wagmi";
 import { injected } from "wagmi/connectors";
 import { useCallback, useMemo } from "react";
+import { createClient, createAccount } from "genlayer-js";
+import { studionet } from "genlayer-js/chains";
+import { TransactionStatus } from "genlayer-js/types";
 import type { Track, Proposal, MintedElement } from "./types";
 
 // ---------------------------------------------------------------------------
-// Chain & wagmi config
+// wagmi — wallet connection UI only
 // ---------------------------------------------------------------------------
 export const genLayerStudio = defineChain({
   id: 61_999,
   name: "GenLayer Studio",
   nativeCurrency: { name: "GEN", symbol: "GEN", decimals: 18 },
-  rpcUrls: {
-    default: { http: ["https://studio.genlayer.com/api"] },
-  },
+  rpcUrls: { default: { http: ["https://studio.genlayer.com/api"] } },
   testnet: true,
 });
 
@@ -26,120 +27,126 @@ export const wagmiConfig = createConfig({
 });
 
 export const CONTRACT_ADDRESS =
-  "0x0000000000000000000000000000000000000000" as const;
-
-const RPC_URL = "https://studio.genlayer.com/api";
+  "0x3F51358206490CcB8eDD2D40Fd8bb42bCd39F363" as const;
 
 // ---------------------------------------------------------------------------
-// JSON-RPC fetch helper
+// genlayer-js clients
 // ---------------------------------------------------------------------------
-let _id = 1;
-async function rpcPost<T>(method: string, params: unknown): Promise<T> {
-  const res = await fetch(RPC_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ jsonrpc: "2.0", id: _id++, method, params }),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status} from GenLayer RPC`);
-  const json = (await res.json()) as {
-    result?: T;
-    error?: { message?: string; code?: number };
-  };
-  if (json.error)
-    throw new Error(json.error.message ?? `GenLayer RPC error ${json.error.code}`);
-  return json.result as T;
+function makeReadClient() {
+  return createClient({ chain: studionet });
+}
+
+function makeWriteClient() {
+  const pk = process.env.NEXT_PUBLIC_GENLAYER_PRIVATE_KEY as `0x${string}` | undefined;
+  if (!pk) throw new Error("Set NEXT_PUBLIC_GENLAYER_PRIVATE_KEY in .env.local");
+  const account = createAccount(pk);
+  return { client: createClient({ chain: studionet, account }), account };
 }
 
 // ---------------------------------------------------------------------------
-// Resolve the connected address at call time.
-// Avoids stale closure issues during wagmi's reconnecting phase:
-// useAccount().address may be undefined briefly on page load even when a
-// wallet is already connected — querying eth_accounts directly always works.
+// Safe value coercion — readContract may return string OR already-parsed value
 // ---------------------------------------------------------------------------
-async function resolveAddress(staleAddress: string | undefined): Promise<string> {
-  if (staleAddress) return staleAddress;
-
-  // Wagmi is still reconnecting — ask the injected provider directly
-  const eth = (typeof window !== "undefined" ? (window as { ethereum?: { request: (a: { method: string }) => Promise<string[]> } }).ethereum : undefined);
-  if (eth) {
-    const accounts = await eth.request({ method: "eth_accounts" });
-    if (accounts?.[0]) return accounts[0];
+function coerce<T>(v: unknown): T {
+  if (typeof v === "string") {
+    try { return JSON.parse(v) as T; } catch { return v as unknown as T; }
   }
-  throw new Error("No wallet connected — please connect first.");
+  return v as unknown as T;
 }
 
 // ---------------------------------------------------------------------------
-// Method name types
-// ---------------------------------------------------------------------------
-type WriteMethod =
-  | "submit_seed"
-  | "propose_evolution"
-  | "fork_track"
-  | "evaluate_proposal"
-  | "fund_treasury"
-  | "claim_rewards"
-  | "mint_element";
-
-type ReadMethod =
-  | "get_track"
-  | "get_proposal"
-  | "list_active_tracks"
-  | "get_pending_rewards"
-  | "get_treasury_balance"
-  | "get_contribution_count"
-  | "get_my_minted_elements"
-  | "get_minted_element";
-
-// ---------------------------------------------------------------------------
-// Hook
+// useHarmonyForge
 // ---------------------------------------------------------------------------
 export function useHarmonyForge() {
-  // address may be undefined during wagmi's reconnecting phase — resolveAddress
-  // handles that by falling back to eth_accounts at call time.
   const { address } = useAccount();
 
   const read = useCallback(
-    <T,>(method: ReadMethod, args: unknown[] = []): Promise<T> =>
-      rpcPost<T>("gen_call", [{ to: CONTRACT_ADDRESS, function: method, args }]),
+    async <T,>(functionName: string, args: unknown[] = []): Promise<T> => {
+      const client = makeReadClient();
+      const result = await client.readContract({
+        address: CONTRACT_ADDRESS,
+        functionName,
+        args,
+      });
+      return coerce<T>(result);
+    },
     [],
   );
 
+  // Returns { txHash, result } where result is the contract method's return value
   const write = useCallback(
-    async (method: WriteMethod, args: unknown[] = [], valueWei = 0n): Promise<string> => {
-      const from = await resolveAddress(address);
-      return rpcPost<string>("gen_send_transaction", [
-        { from, to: CONTRACT_ADDRESS, function: method, args, value: valueWei.toString() },
-      ]);
+    async (
+      functionName: string,
+      args: unknown[] = [],
+      value = BigInt(0),
+    ): Promise<{ txHash: string; result: unknown }> => {
+      const { client, account } = makeWriteClient();
+
+      const txHash = await client.writeContract({
+        account,
+        address: CONTRACT_ADDRESS,
+        functionName,
+        args,
+        value,
+      });
+
+      const receipt = await client.waitForTransactionReceipt({
+        hash: txHash,
+        status: TransactionStatus.ACCEPTED,
+      });
+
+      // genlayer-js puts the contract's return value in receipt.result
+      const result = (receipt as unknown as Record<string, unknown>).result ?? txHash;
+      return { txHash: txHash as string, result };
     },
     [address],
   );
 
   return useMemo(
     () => ({
+      // writes — return the contract's own return value (track/proposal id) when available
       submitSeed: (title: string, seedPrompt: string, genre: string) =>
-        write("submit_seed", [title, seedPrompt, genre]),
-      proposeEvolution: (trackId: string, text: string, type: string) =>
-        write("propose_evolution", [trackId, text, type]),
-      forkTrack: (parentTrackId: string, newTitle: string) =>
-        write("fork_track", [parentTrackId, newTitle]),
-      evaluateProposal: (proposalId: string) =>
-        write("evaluate_proposal", [proposalId]),
-      fundTreasury: (valueWei: bigint) => write("fund_treasury", [], valueWei),
-      claimRewards: () => write("claim_rewards", []),
-      mintElement: (trackId: string, kind: string, valueWei: bigint) =>
-        write("mint_element", [trackId, kind], valueWei),
+        write("submit_seed", [title, seedPrompt, genre])
+          .then(({ result }) => coerce<string>(result)),
 
+      proposeEvolution: (trackId: string, text: string, type: string) =>
+        write("propose_evolution", [trackId, text, type])
+          .then(({ result }) => coerce<string>(result)),
+
+      forkTrack: (parentTrackId: string, newTitle: string) =>
+        write("fork_track", [parentTrackId, newTitle])
+          .then(({ result }) => coerce<string>(result)),
+
+      evaluateProposal: (proposalId: string) =>
+        write("evaluate_proposal", [proposalId])
+          .then(({ txHash }) => txHash),
+
+      fundTreasury: (valueWei: bigint) =>
+        write("fund_treasury", [], valueWei).then(({ txHash }) => txHash),
+
+      claimRewards: () =>
+        write("claim_rewards", []).then(({ txHash }) => txHash),
+
+      mintElement: (trackId: string, kind: string, valueWei: bigint) =>
+        write("mint_element", [trackId, kind], valueWei)
+          .then(({ result }) => coerce<string>(result)),
+
+      // reads
       getTrack: (trackId: string) =>
-        read<string>("get_track", [trackId]).then((s) => JSON.parse(s) as Track),
+        read<Track>("get_track", [trackId]),
       getProposal: (proposalId: string) =>
-        read<string>("get_proposal", [proposalId]).then((s) => JSON.parse(s) as Proposal),
-      listActiveTracks: () => read<string[]>("list_active_tracks", []),
-      getPendingRewards: (addr: string) => read<string>("get_pending_rewards", [addr]),
-      getTreasuryBalance: () => read<string>("get_treasury_balance", []),
-      getContributionCount: (addr: string) => read<string>("get_contribution_count", [addr]),
-      getMyMintedElements: () => read<string[]>("get_my_minted_elements", []),
+        read<Proposal>("get_proposal", [proposalId]),
+      listActiveTracks: () =>
+        read<string[]>("list_active_tracks", []),
+      getPendingRewards: (addr: string) =>
+        read<unknown>("get_pending_rewards", [addr]).then((v) => String(v)),
+      getTreasuryBalance: () =>
+        read<unknown>("get_treasury_balance", []).then((v) => String(v)),
+      getContributionCount: (addr: string) =>
+        read<unknown>("get_contribution_count", [addr]).then((v) => String(v)),
+      getMyMintedElements: () =>
+        read<string[]>("get_my_minted_elements", []),
       getMintedElement: (elementId: string) =>
-        read<string>("get_minted_element", [elementId]).then((s) => JSON.parse(s) as MintedElement),
+        read<MintedElement>("get_minted_element", [elementId]),
     }),
     [read, write],
   );

@@ -61,7 +61,7 @@ export function RewardsPanel() {
       await claimRewards();
       await refresh();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Nothing landed — try again in a moment.");
+      setError(err instanceof Error ? err.message : (typeof err === "object" ? JSON.stringify(err) : String(err)));
     } finally {
       setClaiming(false);
     }

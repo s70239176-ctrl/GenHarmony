@@ -10,7 +10,7 @@ import { EvaluateProposalButton } from "./EvaluateProposalButton";
 import { MintElementModal } from "./MintElementModal";
 
 interface SessionProposal {
-  id: string;
+  id: string;   // real on-chain proposal ID
   type: string;
 }
 
@@ -18,6 +18,7 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
   const { getTrack } = useHarmonyForge();
   const [track, setTrack] = useState<Track | null>(null);
   const [mintOpen, setMintOpen] = useState(false);
+  // Real proposal IDs returned by propose_evolution on-chain
   const [sessionProposals, setSessionProposals] = useState<SessionProposal[]>([]);
 
   async function refresh() {
@@ -29,11 +30,9 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackId]);
 
-  // proposeEvolution returns a tx hash in this scaffold; in a full client you'd
-  // resolve the receipt to read the emitted proposal_id back out.
-  async function trackNewProposal(type: string) {
-    const id = `${trackId}-${sessionProposals.length}`;
-    setSessionProposals((p) => [...p, { id, type }]);
+  // Called by ProposeEvolutionForm with the real proposal ID from the contract
+  function onProposed(proposalId: string, type: string) {
+    setSessionProposals((p) => [...p, { id: proposalId, type }]);
   }
 
   if (!track) {
@@ -60,11 +59,9 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
             </p>
             <h1 className="mt-2 font-display text-3xl font-bold leading-tight text-ink">{track.title}</h1>
             <p className="mt-2 font-mono text-[11px] text-muted">by {track.creator}</p>
-
             <p className="mt-6 whitespace-pre-wrap font-body text-[15px] leading-relaxed text-ink/90">
               {track.current_content}
             </p>
-
             <Button variant="vinyl" onClick={() => setMintOpen(true)} className="mt-8 gap-2">
               <Stamp className="h-3.5 w-3.5" />
               Mint this version
@@ -74,7 +71,7 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
 
         {/* Propose + evaluate */}
         <div className="space-y-6">
-          <ProposeEvolutionForm trackId={track.id} onProposed={() => trackNewProposal("submitted")} />
+          <ProposeEvolutionForm trackId={track.id} onProposed={onProposed} />
 
           <div className="rounded-md border border-line bg-panel/70 p-5">
             <div className="mb-4 flex items-center gap-2.5">
@@ -85,7 +82,7 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
             </div>
             {sessionProposals.length === 0 ? (
               <p className="font-body text-sm text-muted">
-                Nothing queued yet. Propose an evolution above, then convene the jury here.
+                Nothing queued yet. Propose an evolution above — its on-chain ID will appear here.
               </p>
             ) : (
               <ul className="space-y-3">
@@ -94,7 +91,10 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
                     key={p.id}
                     className="flex items-center justify-between rounded-sm border border-line/60 px-3 py-2.5"
                   >
-                    <span className="font-mono text-[12px] uppercase tracking-[0.08em] text-muted">{p.type}</span>
+                    <div>
+                      <span className="font-mono text-[12px] uppercase tracking-[0.08em] text-muted">{p.type}</span>
+                      <span className="ml-2 led text-[10px] text-muted/60">#{p.id}</span>
+                    </div>
                     <EvaluateProposalButton proposalId={p.id} onResolved={refresh} />
                   </li>
                 ))}
@@ -104,7 +104,7 @@ export function TrackDetail({ trackId, onBack }: { trackId: string; onBack: () =
         </div>
       </div>
 
-      {/* Evolution history, tape-reel style */}
+      {/* Evolution history */}
       <div>
         <h3 className="mb-4 font-display text-sm font-semibold uppercase tracking-[0.1em] text-muted">
           Evolution history

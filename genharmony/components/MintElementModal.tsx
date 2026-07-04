@@ -33,7 +33,7 @@ export function MintElementModal({
       const elementId = await mintElement(trackId, kind, parseEther(amount || "0"));
       setMintedId(elementId);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Mint failed — the press jammed.");
+      setError(err instanceof Error ? err.message : (typeof err === "object" ? JSON.stringify(err) : String(err)));
     } finally {
       setMinting(false);
     }
