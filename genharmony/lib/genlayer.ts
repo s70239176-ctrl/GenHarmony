@@ -65,7 +65,7 @@ export function useHarmonyForge() {
       const result = await client.readContract({
         address: CONTRACT_ADDRESS,
         functionName,
-        args,
+        args: args as never[],
       });
       return coerce<T>(result);
     },
@@ -85,7 +85,7 @@ export function useHarmonyForge() {
         account,
         address: CONTRACT_ADDRESS,
         functionName,
-        args,
+        args: args as never[],
         value,
       });
 
